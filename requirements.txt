@@ -1,0 +1,4 @@
+flask
+cloud-sql-python-connector[pymysql]
+pymysql
+gunicorn
