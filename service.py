@@ -13,7 +13,7 @@ ALLOWED_ENVIRONMENTS = frozenset({
     "apl_staging",
     "cas_staging",
     "preview",
-    *(f"staging-{i:02d}" for i in range(1, 21)),
+    *(f"staging-{i:02d}_staging" for i in range(1, 21)),
     *(f"preview-{i:02d}" for i in range(1, 21)),
 })
 
