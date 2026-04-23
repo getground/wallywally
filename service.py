@@ -1,48 +1,45 @@
 import os
 
 import pymysql
-from google.cloud.sql.connector import Connector
+from google.cloud.sql.connector import Connector, IPTypes
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-ALLOWED_ENVIRONMENTS = frozenset({"staging", "preview"})
+INSTANCE_CONNECTION_NAME = "terranova-staging-shared:europe-west1:terranova-staging-shared-mysql"
+DB_USER = "wallywally-service"
 
-# DB_NAME secret format: INSTANCE_CONNECTION_NAME:DB_NAME:DB_USER:DB_PASSWORD
-# e.g. project:region:instance:mydb:readonly_user:s3cret
-_db_connection = None
+# Required constants:
+#   INSTANCE_CONNECTION_NAME - PROJECT:REGION:INSTANCE
+#   DB_USER                  - Cloud SQL IAM DB user (SA email sans
+#                              ".gserviceaccount.com" for MySQL)
+# Optional:
+#   DB_IP_TYPE               - "PUBLIC" (default) or "PRIVATE"
+#
+# Authentication uses Application Default Credentials:
+#   - Locally:     `gcloud auth application-default login` (optionally with
+#                  --impersonate-service-account=<DB_USER>@...gserviceaccount.com)
+#   - On Cloud Run: the attached service account
+_connector: Connector | None = None
 
 
-def _parse_db_secret():
-    global _db_connection
-    if _db_connection is not None:
-        return _db_connection
-    raw = os.environ.get("DB_NAME")
-    if not raw:
-        raise ValueError("DB_NAME environment variable is required")
-    parts = raw.rsplit(":", 3)
-    if len(parts) != 4:
-        raise ValueError(
-            "DB_NAME must be INSTANCE_CONNECTION_NAME:DB_NAME:DB_USER:DB_PASSWORD"
-        )
-    _db_connection = {
-        "instance": parts[0],
-        "db": parts[1],
-        "user": parts[2],
-        "password": parts[3],
-    }
-    return _db_connection
+def _get_connector() -> Connector:
+    global _connector
+    if _connector is None:
+        _connector = Connector()
+    return _connector
 
 
 def get_connection():
-    cfg = _parse_db_secret()
-    connector = Connector()
-    return connector.connect(
-        cfg["instance"],
+    instance = INSTANCE_CONNECTION_NAME
+    user = DB_USER
+    ip_type = IPTypes[os.environ.get("DB_IP_TYPE", "PUBLIC").upper()]
+    return _get_connector().connect(
+        instance,
         "pymysql",
-        user=cfg["user"],
-        password=cfg["password"],
-        db=cfg["db"],
+        user=user,
+        enable_iam_auth=True,
+        ip_type=ip_type,
     )
 
 
@@ -51,6 +48,28 @@ def health():
     return jsonify({"status": "ok"})
 
 
+# Get the account ID for a given wallet ID and environment
+#
+# Example:
+#   GET /account-id?wallet_id=3&environment=apl_staging
+#
+# Returns:
+#   { "account_id": "A2100GSHXP" }
+#
+# Errors:
+#   - 400: Missing wallet_id or environment
+#   - 404: No account found for wallet_id
+#   - 500: Internal server error
+#
+# Environment examples:
+#   - apl_staging
+#   - cas_staging
+#   - preview
+#   - staging-02
+#   - staging-14
+#   - preview-04
+#   - preview-11
+#
 @app.route("/account-id")
 def account_id():
     wallet_id = request.args.get("wallet_id")
@@ -60,8 +79,6 @@ def account_id():
         return jsonify({"error": "Missing wallet_id"}), 400
     if not environment:
         return jsonify({"error": "Missing environment"}), 400
-    if environment not in ALLOWED_ENVIRONMENTS:
-        return jsonify({"error": f"Invalid environment. Allowed: {sorted(ALLOWED_ENVIRONMENTS)}"}), 400
 
     schema = f"{environment}_wallet"
     table = "modulr_wallets"
