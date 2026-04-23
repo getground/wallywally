@@ -9,6 +9,14 @@ app = Flask(__name__)
 INSTANCE_CONNECTION_NAME = "terranova-staging-shared:europe-west1:terranova-staging-shared-mysql"
 DB_USER = "wallywally-service"
 
+ALLOWED_ENVIRONMENTS = frozenset({
+    "apl_staging",
+    "cas_staging",
+    "preview",
+    *(f"staging-{i:02d}" for i in range(1, 21)),
+    *(f"preview-{i:02d}" for i in range(1, 21)),
+})
+
 # Required constants:
 #   INSTANCE_CONNECTION_NAME - PROJECT:REGION:INSTANCE
 #   DB_USER                  - Cloud SQL IAM DB user (SA email sans
@@ -72,13 +80,21 @@ def health():
 #
 @app.route("/account-id")
 def account_id():
-    wallet_id = request.args.get("wallet_id")
+    wallet_id_raw = request.args.get("wallet_id")
     environment = request.args.get("environment")
 
-    if not wallet_id:
+    if not wallet_id_raw:
         return jsonify({"error": "Missing wallet_id"}), 400
     if not environment:
         return jsonify({"error": "Missing environment"}), 400
+
+    try:
+        wallet_id = int(wallet_id_raw)
+    except ValueError:
+        return jsonify({"error": "wallet_id must be an integer"}), 400
+
+    if environment not in ALLOWED_ENVIRONMENTS:
+        return jsonify({"error": "Invalid environment"}), 400
 
     schema = f"{environment}_wallet"
     table = "modulr_wallets"
@@ -99,5 +115,6 @@ def account_id():
             return jsonify({"account_id": row[0]})
         return jsonify({"error": "No account found for wallet_id"}), 404
 
-    except pymysql.Error as e:
-        return jsonify({"error": str(e)}), 500
+    except pymysql.Error:
+        app.logger.exception("DB error")
+        return jsonify({"error": "Internal server error"}), 500
