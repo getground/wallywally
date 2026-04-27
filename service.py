@@ -43,6 +43,9 @@ ALLOWED_ENVIRONMENTS = frozenset({
     *(f"preview-{i:02d}" for i in range(1, 21)),
 })
 
+WALLET_SUFFIX = "_wallet"
+EPH_PREVIEW_WALLET_SUFFIX = "-wallet"
+
 _connector: Connector | None = None
 
 
@@ -149,7 +152,14 @@ def account_id():
     if environment not in ALLOWED_ENVIRONMENTS:
         return jsonify({"error": "Invalid environment"}), 400
 
-    schema = f"{environment}_wallet"
+    schema = None
+    if environment.startswith("preview-"):
+        schema = f"{environment}{EPH_PREVIEW_WALLET_SUFFIX}"
+    else:
+        schema = f"{environment}{WALLET_SUFFIX}"
+    if not schema:
+        return jsonify({"error": "Invalid environment"}), 400
+
     table = "modulr_wallets"
 
     try:
